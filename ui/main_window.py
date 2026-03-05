@@ -1,0 +1,191 @@
+"""Main application window."""
+from pathlib import Path
+
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
+    QPushButton, QLabel, QFrame, QScrollArea, QSizePolicy
+)
+from PySide6.QtCore import Qt, QSettings, QPoint
+from PySide6.QtGui import QFont, QAction
+from database.models import User, Role
+from ui.widgets.toast import Toast
+from config.settings import ROLES
+from modules.orders.widget import OrdersWidget
+from modules.employees.widget import EmployeesWidget
+from modules.materials.widget import MaterialsWidget
+from modules.dashboard.widget import DashboardWidget
+from modules.salary.widget import SalaryWidget
+from modules.expenses.widget import ExpensesWidget
+from modules.admin.widget import AdminWidget
+
+
+class MainWindow(QMainWindow):
+    """Main application window with sidebar navigation."""
+
+    def __init__(self, user: User, role: Role):
+        super().__init__()
+        self.user = user
+        self.role = role
+        self.settings = QSettings("Atelier", "2ATElie")
+        self.stacked = QStackedWidget()
+        self.pages = {}
+        self.setup_ui()
+        self.load_theme()
+
+    def setup_ui(self):
+        self.setWindowTitle("Ателье — Система учёта")
+        self.setMinimumSize(1200, 700)
+        self.resize(1400, 800)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Sidebar
+        sidebar = self.create_sidebar()
+        sidebar.setObjectName("sidebar")
+        main_layout.addWidget(sidebar)
+
+        # Content area
+        content = QFrame()
+        content.setObjectName("card")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(24, 24, 24, 24)
+        content_layout.addWidget(self.stacked)
+        main_layout.addWidget(content, 1)
+
+        # Add pages (pass main_window for toast/refresh)
+        self.pages["dashboard"] = DashboardWidget(self)
+        self.stacked.addWidget(self.pages["dashboard"])
+        self.pages["orders"] = OrdersWidget(self)
+        self.stacked.addWidget(self.pages["orders"])
+        self.pages["employees"] = EmployeesWidget(self)
+        self.stacked.addWidget(self.pages["employees"])
+        self.pages["materials"] = MaterialsWidget(self)
+        self.pages["salary"] = SalaryWidget(self)
+        self.stacked.addWidget(self.pages["salary"])
+        self.pages["expenses"] = ExpensesWidget(self)
+        self.stacked.addWidget(self.pages["expenses"])
+        self.pages["admin"] = AdminWidget(self)
+        self.stacked.addWidget(self.pages["admin"])
+
+        # Show first page based on role
+        self.navigate_to("dashboard")
+
+    def create_sidebar(self):
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(260)
+        # Sidebar uses theme - no inline override
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(16, 24, 16, 24)
+        layout.setSpacing(8)
+
+        # Logo/title
+        title = QLabel("Ателье")
+        title.setStyleSheet("color: #e8e8e8; font-size: 22px; font-weight: bold;")
+        layout.addWidget(title)
+
+        role_label = QLabel(ROLES.get(self.role.name, self.role.display_name))
+        role_label.setStyleSheet("color: #8b3a3a; font-size: 12px;")
+        layout.addWidget(role_label)
+        layout.addSpacing(24)
+
+        # Nav buttons with icons (Unicode)
+        nav_icons = {"dashboard": "📊", "orders": "📋", "employees": "👥", "materials": "🧵",
+                     "salary": "💰", "expenses": "📉", "admin": "⚙️"}
+        nav_items = [
+            ("dashboard", "Дашборд"),
+            ("orders", "Заказы"),
+            ("employees", "Сотрудники"),
+            ("materials", "Материалы"),
+            ("salary", "Зарплаты"),
+            ("expenses", "Затраты"),
+        ]
+
+        if self.role.name == "admin":
+            nav_items.append(("admin", "Админ-панель"))
+
+        for page_id, label in nav_items:
+            icon = nav_icons.get(page_id, "•")
+            btn = QPushButton(f"  {icon}  {label}")
+            btn.setObjectName("nav_btn")
+            btn.setCheckable(True)
+            btn.setStyleSheet("""
+                QPushButton {
+                    text-align: left;
+                    padding: 12px 16px;
+                    background: transparent;
+                    border: none;
+                    border-radius: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #3d3d40;
+                }
+                QPushButton:checked {
+                    background-color: #8b3a3a;
+                }
+            """)
+            btn.clicked.connect(lambda checked, p=page_id: self.navigate_to(p))
+            layout.addWidget(btn)
+            self.nav_buttons = getattr(self, "nav_buttons", {})
+            self.nav_buttons[page_id] = btn
+
+        layout.addStretch()
+
+        # Theme toggle
+        theme_btn = QPushButton("Тема: Тёмная")
+        theme_btn.setObjectName("secondary")
+        theme_btn.clicked.connect(self.toggle_theme)
+        layout.addWidget(theme_btn)
+        self.theme_btn = theme_btn
+
+        return sidebar
+
+    def add_placeholder_page(self, page_id: str, title: str, subtitle: str):
+        """Add a placeholder page (will be replaced by real modules)."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(QLabel(title, objectName="title"))
+        layout.addWidget(QLabel(subtitle, objectName="subtitle"))
+        layout.addStretch()
+        self.pages[page_id] = page
+        self.stacked.addWidget(page)
+
+    def navigate_to(self, page_id: str):
+        """Navigate to page."""
+        if page_id in self.pages:
+            self.stacked.setCurrentWidget(self.pages[page_id])
+            for pid, btn in getattr(self, "nav_buttons", {}).items():
+                btn.setChecked(pid == page_id)
+
+    def toggle_theme(self):
+        """Toggle dark/light theme."""
+        current = self.settings.value("theme", "dark")
+        new_theme = "light" if current == "dark" else "dark"
+        self.settings.setValue("theme", new_theme)
+        self.load_theme()
+        self.theme_btn.setText(f"Тема: {'Светлая' if new_theme == 'light' else 'Тёмная'}")
+
+    def load_theme(self):
+        """Load QSS theme."""
+        import sys
+        theme = self.settings.value("theme", "dark")
+        if getattr(sys, "frozen", False):
+            base = Path(sys._MEIPASS) / "ui"
+        else:
+            base = Path(__file__).parent
+        theme_file = base / "styles" / f"theme_{theme}.qss"
+        if theme_file.exists():
+            with open(theme_file, encoding="utf-8") as f:
+                self.setStyleSheet(f.read())
+
+    def show_toast(self, message: str, duration: int = 2500):
+        """Show toast notification."""
+        toast = Toast(message, self, duration)
+        toast.adjustSize()
+        br = self.mapToGlobal(self.rect().bottomRight())
+        toast.move(br.x() - toast.width() - 20, br.y() - toast.height() - 80)
+        toast.show()

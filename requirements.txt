@@ -1,0 +1,8 @@
+PySide6>=6.6.0
+SQLAlchemy>=2.0.0
+alembic
+pyqtgraph
+openpyxl
+reportlab
+bcrypt
+pyinstaller>=6.0.0
