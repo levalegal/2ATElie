@@ -126,7 +126,7 @@ class ExpensesWidget(QWidget):
 
     def add_expense(self):
         dlg = ExpenseEditDialog(self)
-        if dlg.exec() == dlg.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             with get_db() as db:
                 exp = Expense(**dlg.get_data())
                 db.add(exp)
@@ -144,7 +144,7 @@ class ExpensesWidget(QWidget):
             if not exp:
                 return
             dlg = ExpenseEditDialog(self, exp)
-            if dlg.exec() == dlg.Accepted:
+            if dlg.exec() == QDialog.DialogCode.Accepted:
                 data = dlg.get_data()
                 for k, v in data.items():
                     setattr(exp, k, v)

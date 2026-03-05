@@ -2,7 +2,8 @@
 import bcrypt
 import shutil
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date
+from sqlalchemy import func
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
@@ -12,9 +13,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from database.session import get_db
-from database.models import User, Role, Employee
+from database.models import (
+    User, Role, Employee, Client, Order, Material, Expense,
+    ExpenseCategory
+)
 from database.test_data import load_test_data as do_load_test_data
-from config.settings import DB_PATH, DATA_DIR
+from config.settings import DB_PATH, DATA_DIR, ORDER_STATUSES
+from utils.export import export_all_data_to_pdf
 
 
 class UserEditDialog(QDialog):
@@ -135,6 +140,15 @@ class AdminWidget(QWidget):
         test_layout.addWidget(test_btn)
         layout.addWidget(test_group)
 
+        # Export all data
+        export_group = QGroupBox("Экспорт")
+        export_layout = QVBoxLayout(export_group)
+        export_pdf_btn = QPushButton("Экспорт всех данных в PDF")
+        export_pdf_btn.clicked.connect(self.export_all_pdf)
+        export_layout.addWidget(QLabel("Выгружает сводку, сотрудников, клиентов, заказы, материалы и затраты в PDF."))
+        export_layout.addWidget(export_pdf_btn)
+        layout.addWidget(export_group)
+
         # Backup
         backup_group = QGroupBox("Резервное копирование")
         backup_layout = QVBoxLayout(backup_group)
@@ -157,7 +171,7 @@ class AdminWidget(QWidget):
 
     def add_user(self):
         dlg = UserEditDialog(self)
-        if dlg.exec() == dlg.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             data = dlg.get_data()
             if "password_hash" not in data:
                 return
@@ -185,7 +199,7 @@ class AdminWidget(QWidget):
             if not user:
                 return
             dlg = UserEditDialog(self, user)
-            if dlg.exec() == dlg.Accepted:
+            if dlg.exec() == QDialog.DialogCode.Accepted:
                 data = dlg.get_data()
                 user.role_id = data["role_id"]
                 if "password_hash" in data:
@@ -214,6 +228,84 @@ class AdminWidget(QWidget):
                             page.refresh()
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", str(e))
+
+    def export_all_pdf(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Экспорт всех данных", "",
+            "PDF (*.pdf)"
+        )
+        if not path:
+            return
+        try:
+            with get_db() as db:
+                # Summary
+                revenue = db.query(func.sum(Order.total_amount)).filter(
+                    Order.status == "ready"
+                ).scalar() or 0
+                expenses_sum = db.query(func.sum(Expense.amount)).scalar() or 0
+                data = {
+                    "summary": {
+                        "revenue": revenue,
+                        "expenses": expenses_sum,
+                        "profit": revenue - expenses_sum,
+                        "orders_count": db.query(Order).count(),
+                        "employees_count": db.query(Employee).count(),
+                        "clients_count": db.query(Client).count(),
+                    },
+                    "employees": [
+                        {
+                            "name": e.full_name,
+                            "position": e.position,
+                            "phone": e.phone or "",
+                            "base_salary": e.base_salary or 0,
+                            "order_percent": e.order_percent or 0,
+                            "hourly_rate": e.hourly_rate or 0,
+                        }
+                        for e in db.query(Employee).order_by(Employee.full_name).all()
+                    ],
+                    "clients": [
+                        {
+                            "full_name": c.full_name,
+                            "phone": c.phone or "",
+                            "email": c.email or "",
+                        }
+                        for c in db.query(Client).order_by(Client.full_name).all()
+                    ],
+                    "orders": [
+                        {
+                            "id": o.id,
+                            "client_name": o.client.full_name if o.client else "-",
+                            "status": o.status,
+                            "status_display": ORDER_STATUSES.get(o.status, o.status),
+                            "total_amount": o.total_amount or 0,
+                            "deadline": o.deadline.strftime("%d.%m.%Y") if o.deadline else "-",
+                        }
+                        for o in db.query(Order).order_by(Order.id).all()
+                    ],
+                    "materials": [
+                        {
+                            "name": m.name,
+                            "category": m.category or "",
+                            "unit": m.unit or "",
+                            "price_per_unit": m.price_per_unit or 0,
+                            "quantity": m.quantity or 0,
+                        }
+                        for m in db.query(Material).order_by(Material.name).all()
+                    ],
+                    "expenses": [
+                        {
+                            "date": e.date.strftime("%d.%m.%Y") if e.date else "",
+                            "category": e.category.name if e.category else "",
+                            "amount": e.amount or 0,
+                            "description": e.description or "",
+                        }
+                        for e in db.query(Expense).order_by(Expense.date.desc()).limit(200).all()
+                    ],
+                }
+            export_all_data_to_pdf(data, path)
+            QMessageBox.information(self, "Готово", f"Отчёт сохранён:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", str(e))
 
     def backup_db(self):
         path, _ = QFileDialog.getSaveFileName(

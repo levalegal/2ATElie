@@ -4,13 +4,14 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QDialog, QFormLayout, QLineEdit,
-    QDoubleSpinBox, QComboBox, QMessageBox, QAbstractItemView
+    QDoubleSpinBox, QComboBox, QMessageBox, QAbstractItemView, QFileDialog
 )
 from PySide6.QtCore import Qt
 
 from database.session import get_db
 from database.models import Employee
 from config.settings import ROLES
+from utils.export import export_employees_to_excel
 
 
 POSITIONS = [
@@ -116,7 +117,11 @@ class EmployeesWidget(QWidget):
         btn_layout = QHBoxLayout()
         add_btn = QPushButton("+ Добавить сотрудника")
         add_btn.clicked.connect(self.add_employee)
+        export_btn = QPushButton("Экспорт в Excel")
+        export_btn.setObjectName("secondary")
+        export_btn.clicked.connect(self.export_report)
         btn_layout.addWidget(add_btn)
+        btn_layout.addWidget(export_btn)
         btn_layout.addStretch()
         refresh_btn = QPushButton("Обновить")
         refresh_btn.setObjectName("secondary")
@@ -154,7 +159,7 @@ class EmployeesWidget(QWidget):
 
     def add_employee(self):
         dlg = EmployeeEditDialog(self)
-        if dlg.exec() == dlg.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             with get_db() as db:
                 emp = Employee(**dlg.get_data())
                 db.add(emp)
@@ -172,9 +177,28 @@ class EmployeesWidget(QWidget):
             if not emp:
                 return
             dlg = EmployeeEditDialog(self, emp)
-            if dlg.exec() == dlg.Accepted:
+            if dlg.exec() == QDialog.DialogCode.Accepted:
                 data = dlg.get_data()
                 for k, v in data.items():
                     setattr(emp, k, v)
                 db.commit()
                 self.load_data()
+
+    def export_report(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Экспорт", "", "Excel (*.xlsx)")
+        if not path:
+            return
+        pos_map = dict(POSITIONS)
+        records = []
+        with get_db() as db:
+            for emp in db.query(Employee).order_by(Employee.full_name).all():
+                records.append({
+                    "name": emp.full_name,
+                    "position": pos_map.get(emp.position, emp.position),
+                    "phone": emp.phone or "",
+                    "base_salary": emp.base_salary or 0,
+                    "order_percent": emp.order_percent or 0,
+                    "hourly_rate": emp.hourly_rate or 0,
+                })
+        export_employees_to_excel(records, path)
+        QMessageBox.information(self, "Готово", "Сохранено")

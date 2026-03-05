@@ -24,6 +24,9 @@ dist/
 data/
 *.db
 
+# Environment
+.env
+
 # PyInstaller
 *.spec.bak
 *.manifest

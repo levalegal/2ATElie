@@ -2,12 +2,14 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QDialog, QFormLayout, QLineEdit,
-    QDoubleSpinBox, QComboBox, QMessageBox, QAbstractItemView
+    QDoubleSpinBox, QComboBox, QMessageBox, QAbstractItemView, QLabel
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush
 
 from database.session import get_db
 from database.models import Material
+from config.settings import LOW_STOCK_THRESHOLD
 
 
 class MaterialEditDialog(QDialog):
@@ -93,6 +95,14 @@ class MaterialsWidget(QWidget):
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
+        self.low_stock_label = QLabel()
+        self.low_stock_label.setStyleSheet(
+            "background-color: #5a3a2a; color: #ffcc99; padding: 10px; "
+            "border-radius: 8px; border: 1px solid #8b5a2b;"
+        )
+        self.low_stock_label.setWordWrap(True)
+        self.low_stock_label.hide()
+        layout.addWidget(self.low_stock_label)
         btn_layout = QHBoxLayout()
         add_btn = QPushButton("+ Добавить материал")
         add_btn.clicked.connect(self.add_material)
@@ -120,18 +130,30 @@ class MaterialsWidget(QWidget):
     def load_data(self):
         with get_db() as db:
             materials = db.query(Material).order_by(Material.name).all()
+            low_stock = [m for m in materials if (m.quantity or 0) < LOW_STOCK_THRESHOLD]
+            if low_stock:
+                names = ", ".join(m.name for m in low_stock[:5])
+                if len(low_stock) > 5:
+                    names += f" и ещё {len(low_stock) - 5}"
+                self.low_stock_label.setText(f"⚠ Низкий остаток ({LOW_STOCK_THRESHOLD} ед.): {names}")
+                self.low_stock_label.show()
+            else:
+                self.low_stock_label.hide()
             self.table.setRowCount(len(materials))
             for i, m in enumerate(materials):
                 self.table.setItem(i, 0, QTableWidgetItem(m.name))
                 self.table.setItem(i, 1, QTableWidgetItem(m.category or ""))
                 self.table.setItem(i, 2, QTableWidgetItem(m.unit or "м"))
                 self.table.setItem(i, 3, QTableWidgetItem(f"{m.price_per_unit or 0:,.0f} ₽"))
-                self.table.setItem(i, 4, QTableWidgetItem(f"{m.quantity or 0}"))
+                qty_item = QTableWidgetItem(f"{m.quantity or 0}")
+                if (m.quantity or 0) < LOW_STOCK_THRESHOLD:
+                    qty_item.setForeground(QBrush(Qt.darkRed))
+                self.table.setItem(i, 4, qty_item)
                 self.table.item(i, 0).setData(Qt.UserRole, m.id)
 
     def add_material(self):
         dlg = MaterialEditDialog(self)
-        if dlg.exec() == dlg.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             with get_db() as db:
                 mat = Material(**dlg.get_data())
                 db.add(mat)
@@ -149,7 +171,7 @@ class MaterialsWidget(QWidget):
             if not mat:
                 return
             dlg = MaterialEditDialog(self, mat)
-            if dlg.exec() == dlg.Accepted:
+            if dlg.exec() == QDialog.DialogCode.Accepted:
                 data = dlg.get_data()
                 for k, v in data.items():
                     setattr(mat, k, v)

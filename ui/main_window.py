@@ -3,10 +3,10 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QPushButton, QLabel, QFrame, QScrollArea, QSizePolicy
+    QPushButton, QLabel, QFrame, QScrollArea, QSizePolicy, QStatusBar
 )
 from PySide6.QtCore import Qt, QSettings, QPoint
-from PySide6.QtGui import QFont, QAction
+from PySide6.QtGui import QFont, QAction, QKeySequence, QShortcut
 from database.models import User, Role
 from ui.widgets.toast import Toast
 from config.settings import ROLES
@@ -71,8 +71,19 @@ class MainWindow(QMainWindow):
         self.pages["admin"] = AdminWidget(self)
         self.stacked.addWidget(self.pages["admin"])
 
-        # Show first page based on role
-        self.navigate_to("dashboard")
+        # Restore last page or show dashboard (respect role access)
+        last_page = self.settings.value("lastPage", "dashboard")
+        if last_page in self.pages and self._can_access(last_page):
+            self.navigate_to(last_page)
+        else:
+            self.navigate_to("dashboard")
+
+        self.setup_shortcuts()
+        self.setup_statusbar()
+
+    def setup_statusbar(self):
+        """Add status bar with shortcuts hint."""
+        self.statusBar().showMessage("Ctrl+1..7 — навигация")
 
     def create_sidebar(self):
         sidebar = QFrame()
@@ -85,49 +96,33 @@ class MainWindow(QMainWindow):
 
         # Logo/title
         title = QLabel("Ателье")
-        title.setStyleSheet("color: #e8e8e8; font-size: 22px; font-weight: bold;")
+        title.setObjectName("sidebar_title")
         layout.addWidget(title)
 
         role_label = QLabel(ROLES.get(self.role.name, self.role.display_name))
-        role_label.setStyleSheet("color: #8b3a3a; font-size: 12px;")
+        role_label.setObjectName("sidebar_role")
         layout.addWidget(role_label)
         layout.addSpacing(24)
 
-        # Nav buttons with icons (Unicode)
+        # Nav buttons with icons (Unicode) - filtered by role
         nav_icons = {"dashboard": "📊", "orders": "📋", "employees": "👥", "materials": "🧵",
                      "salary": "💰", "expenses": "📉", "admin": "⚙️"}
-        nav_items = [
+        all_nav = [
             ("dashboard", "Дашборд"),
             ("orders", "Заказы"),
             ("employees", "Сотрудники"),
             ("materials", "Материалы"),
             ("salary", "Зарплаты"),
             ("expenses", "Затраты"),
+            ("admin", "Админ-панель"),
         ]
-
-        if self.role.name == "admin":
-            nav_items.append(("admin", "Админ-панель"))
+        nav_items = [(pid, lbl) for pid, lbl in all_nav if self._can_access(pid)]
 
         for page_id, label in nav_items:
             icon = nav_icons.get(page_id, "•")
             btn = QPushButton(f"  {icon}  {label}")
             btn.setObjectName("nav_btn")
             btn.setCheckable(True)
-            btn.setStyleSheet("""
-                QPushButton {
-                    text-align: left;
-                    padding: 12px 16px;
-                    background: transparent;
-                    border: none;
-                    border-radius: 8px;
-                }
-                QPushButton:hover {
-                    background-color: #3d3d40;
-                }
-                QPushButton:checked {
-                    background-color: #8b3a3a;
-                }
-            """)
             btn.clicked.connect(lambda checked, p=page_id: self.navigate_to(p))
             layout.addWidget(btn)
             self.nav_buttons = getattr(self, "nav_buttons", {})
@@ -135,8 +130,9 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        # Theme toggle
-        theme_btn = QPushButton("Тема: Тёмная")
+        # Theme toggle - show current theme
+        theme = self.settings.value("theme", "dark")
+        theme_btn = QPushButton(f"Тема: {'Светлая' if theme == 'light' else 'Тёмная'}")
         theme_btn.setObjectName("secondary")
         theme_btn.clicked.connect(self.toggle_theme)
         layout.addWidget(theme_btn)
@@ -158,8 +154,34 @@ class MainWindow(QMainWindow):
         """Navigate to page."""
         if page_id in self.pages:
             self.stacked.setCurrentWidget(self.pages[page_id])
+            self.settings.setValue("lastPage", page_id)
             for pid, btn in getattr(self, "nav_buttons", {}).items():
                 btn.setChecked(pid == page_id)
+
+    def setup_shortcuts(self):
+        """Setup keyboard shortcuts for navigation."""
+        shortcuts = [
+            (Qt.CTRL | Qt.Key_1, "dashboard"),
+            (Qt.CTRL | Qt.Key_2, "orders"),
+            (Qt.CTRL | Qt.Key_3, "employees"),
+            (Qt.CTRL | Qt.Key_4, "materials"),
+            (Qt.CTRL | Qt.Key_5, "salary"),
+            (Qt.CTRL | Qt.Key_6, "expenses"),
+            (Qt.CTRL | Qt.Key_7, "admin"),
+        ]
+        for key, page_id in shortcuts:
+            if page_id in self.pages and self._can_access(page_id):
+                QShortcut(QKeySequence(key), self, activated=lambda p=page_id: self.navigate_to(p))
+
+    def _can_access(self, page_id: str) -> bool:
+        """Check if current role can access page."""
+        if page_id == "admin":
+            return self.role.name == "admin"
+        if page_id in ("salary", "expenses"):
+            return self.role.name in ("admin", "manager")
+        if page_id == "employees":
+            return self.role.name in ("admin", "manager")
+        return True
 
     def toggle_theme(self):
         """Toggle dark/light theme."""
@@ -168,6 +190,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("theme", new_theme)
         self.load_theme()
         self.theme_btn.setText(f"Тема: {'Светлая' if new_theme == 'light' else 'Тёмная'}")
+        if "dashboard" in self.pages and hasattr(self.pages["dashboard"], "_apply_card_theme"):
+            self.pages["dashboard"]._apply_card_theme()
 
     def load_theme(self):
         """Load QSS theme."""

@@ -36,11 +36,13 @@ def load_test_data():
         seed_roles(db)
         seed_expense_categories(db)
 
-        # Ensure admin exists
-        if not db.query(User).filter_by(username="admin").first():
-            admin_role = db.query(Role).filter_by(name="admin").first()
-            pw = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
-            db.add(User(username="admin", password_hash=pw, role_id=admin_role.id))
+        # Ensure admin and manager exist
+        pw_hash = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
+        for username, role_name in [("admin", "admin"), ("manager", "manager")]:
+            if not db.query(User).filter_by(username=username).first():
+                role = db.query(Role).filter_by(name=role_name).first()
+                if role:
+                    db.add(User(username=username, password_hash=pw_hash, role_id=role.id))
 
         # Employees
         employees_data = [
